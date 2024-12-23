@@ -84,24 +84,19 @@ jobs:
           
           if [ -z "$PREVIOUS_COMMIT" ]; then
             echo "No previous commit found (first run or cache miss)"
-            echo "should_process=true" >> $GITHUB_OUTPUT
-          elif [ "$CURRENT_COMMIT" != "$PREVIOUS_COMMIT" ]; then
-            echo "Changes detected between commits"
-            echo "should_process=true" >> $GITHUB_OUTPUT
-          else
+          elif [ "$CURRENT_COMMIT" = "$PREVIOUS_COMMIT" ]; then
             echo "No changes detected"
-            echo "should_process=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
+          echo "Changes detected, proceeding with optimization"
       
       - name: Setup Node.js
-        if: steps.check_changes.outputs.should_process == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
       
       - name: Cache FFmpeg
-        if: steps.check_changes.outputs.should_process == 'true'
         id: cache-ffmpeg
         uses: actions/cache@v4
         with:
@@ -109,7 +104,7 @@ jobs:
           key: ${{ runner.os }}-ffmpeg-${{ env.FFMPEG_VERSION }}
       
       - name: Install FFmpeg
-        if: steps.check_changes.outputs.should_process == 'true' && steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/ffmpeg
           wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
@@ -118,7 +113,6 @@ jobs:
           rm -rf ffmpeg-*-amd64-static*
 
       - name: Add FFmpeg to PATH
-        if: steps.check_changes.outputs.should_process == 'true'
         run: |
           echo "将 FFmpeg 添加到 PATH"
           export PATH="$HOME/ffmpeg:$PATH"
@@ -127,7 +121,6 @@ jobs:
           ~/ffmpeg/ffmpeg -version
       
       - name: Cache node_modules
-        if: steps.check_changes.outputs.should_process == 'true'
         id: cache-node-modules
         uses: actions/cache@v4
         with:
@@ -139,13 +132,11 @@ jobs:
             ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
       
       - name: Install dependencies
-        if: steps.check_changes.outputs.should_process == 'true' && steps.cache-node-modules.outputs.cache-hit != 'true'
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm install sharp
       
       - name: Optimize Assets
-        if: steps.check_changes.outputs.should_process == 'true'
         id: optimize_assets
-        continue-on-error: true
         run: |
           for script in download-external-scripts optimize-images optimize-audio optimize-json; do
             echo "Running $script..."
@@ -156,7 +147,6 @@ jobs:
           done
       
       - name: Process Changes
-        if: steps.check_changes.outputs.should_process == 'true' && steps.optimize_assets.outcome == 'success'
         run: |
           if [[ -n "$(git status --porcelain)" ]]; then
             STATS=$(git diff --name-only | awk '
