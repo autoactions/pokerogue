@@ -121,8 +121,10 @@ jobs:
         if: steps.check_changes.outputs.should_process == 'true'
         run: |
           echo "将 FFmpeg 添加到 PATH"
+          export PATH="$HOME/ffmpeg:$PATH"
           echo "$HOME/ffmpeg" >> $GITHUB_PATH
-          ffmpeg -version
+          ls -la ~/ffmpeg
+          ~/ffmpeg/ffmpeg -version
       
       - name: Cache node_modules
         if: steps.check_changes.outputs.should_process == 'true'
