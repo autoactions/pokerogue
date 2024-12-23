@@ -50,24 +50,28 @@ jobs:
           # 获取上游更新
           git fetch upstream main
           
-          # 检查是否有更新需要同步
-          if git rev-list HEAD..upstream/main --count | grep -q "^0$"; then
+          # 检查上游和本地是否有更新
+          UPSTREAM_CHANGES=$(git rev-list HEAD..upstream/main --count)
+          LOCAL_CHANGES=$(git status --porcelain | wc -l)
+          
+          if [ "$UPSTREAM_CHANGES" -eq 0 ] && [ "$LOCAL_CHANGES" -eq 0 ]; then
             echo "sync_status=uptodate" >> $GITHUB_OUTPUT
-            echo "Repository is up to date, no sync needed"
+            echo "No changes in upstream or local repository"
             exit 0
           fi
           
-          # 尝试合并上游更新
-          if ! git merge upstream/main --no-edit; then
-            echo "Merge failed, conflicts detected"
-            # 中止合并
-            git merge --abort
-            echo "sync_status=conflict" >> $GITHUB_OUTPUT
-            exit 1
+          # 如果有上游更新，尝试合并
+          if [ "$UPSTREAM_CHANGES" -ne 0 ]; then
+            if ! git merge upstream/main --no-edit; then
+              echo "Merge failed, conflicts detected"
+              git merge --abort
+              echo "sync_status=conflict" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+            
+            # 推送合并后的更新到原分支
+            git push
           fi
-          
-          # 推送合并后的更新到原分支
-          git push
           
           echo "sync_status=updated" >> $GITHUB_OUTPUT
       
