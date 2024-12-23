@@ -203,6 +203,28 @@ const seasonalSplashMessages: Season[] = [
 
 //#endregion
 
+// 添加公告消息数组
+const announcementMessages = [
+  "欢迎来到 PokeRogue!\n祝您游戏愉快~",
+  "📝 不想写日报周报？\n微信小程序【日事清单】\n轻松记录每天工作记录，一键生成工作日报周报",
+  "🌷 不会写好评？\n微信小程序【天天快评】\n智能生成好评，一键轻松复制",
+  "😎 想要与众不同？\n微信小程序【头像喵】\n一秒制作自己的专属头像，节日边框挂件应有尽有",
+];
+
+// 当前显示的公告索引
+let currentAnnouncementIndex: number = 0;
+
+// 获取公告消息
+export function getAnnouncementMessage(): string {
+  // 获取当前索引的公告
+  const message = announcementMessages[currentAnnouncementIndex];
+
+  // 更新索引，如果到达末尾则重新开始
+  currentAnnouncementIndex = (currentAnnouncementIndex + 1) % announcementMessages.length;
+
+  return message;
+}
+
 export function getSplashMessages(): string[] {
   const splashMessages: string[] = [ ...commonSplashMessages ];
   console.log("use seasonal splash messages", USE_SEASONAL_SPLASH_MESSAGES);
