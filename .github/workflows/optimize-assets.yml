@@ -1,0 +1,162 @@
+name: Optimize Assets
+
+on:
+  workflow_dispatch:  # 手动触发
+  schedule:
+    - cron: '0 3 * * *'  # 每天凌晨3点执行
+
+env:
+  FFMPEG_VERSION: '6.1'
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30  # 设置任务超时时间
+    
+    steps:
+      # 添加仓库缓存
+      - name: Cache Git Repository
+        id: cache-repo
+        uses: actions/cache@v4
+        with:
+          path: .git
+          key: git-repo-${{ github.sha }}
+          restore-keys: |
+            git-repo-
+      
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整历史以确保正确同步
+          token: ${{ github.token }}  # 使用默认的 GITHUB_TOKEN
+      
+      - name: Setup Git and Check Upstream
+        id: check_upstream
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # 检查是否存在上游仓库
+          if ! git remote | grep -q '^upstream$'; then
+            echo "first_run=true" >> $GITHUB_OUTPUT
+            echo "Adding upstream repository..."
+            git remote add upstream https://github.com/pagefaultgames/pokerogue.git
+          else
+            echo "first_run=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Sync with upstream
+        id: sync
+        run: |
+          # 获取上游更新
+          git fetch upstream main
+          
+          # 检查是否有更新需要同步
+          if git rev-list HEAD..upstream/main --count | grep -q "^0$"; then
+            echo "sync_status=uptodate" >> $GITHUB_OUTPUT
+            echo "Repository is up to date, no sync needed"
+            exit 0
+          fi
+          
+          # 尝试合并上游更新
+          if ! git merge upstream/main --no-edit; then
+            echo "Merge failed, conflicts detected"
+            # 中止合并
+            git merge --abort
+            echo "sync_status=conflict" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # 推送合并后的更新到原分支
+          git push
+          
+          echo "sync_status=updated" >> $GITHUB_OUTPUT
+      
+      # 只有当是首次执行或仓库有更新且同步成功时，才继续执行后续步骤
+      - name: Setup Node.js
+        if: steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      # 优化 FFmpeg 缓存
+      - name: Cache FFmpeg
+        if: steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated'
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: ~/ffmpeg
+          key: ${{ runner.os }}-ffmpeg-static-${{ env.FFMPEG_VERSION }}
+      
+      - name: Install FFmpeg
+        if: (steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated') && steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/ffmpeg
+          wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+          tar xf ffmpeg-release-amd64-static.tar.xz
+          mv ffmpeg-*-amd64-static/ffmpeg ~/ffmpeg/
+          mv ffmpeg-*-amd64-static/ffprobe ~/ffmpeg/
+          rm -rf ffmpeg-*-amd64-static*
+      
+      - name: Add FFmpeg to PATH
+        if: steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated'
+        run: echo "$HOME/ffmpeg" >> $GITHUB_PATH
+      
+      # 添加 node_modules 缓存
+      - name: Cache node_modules
+        if: steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated'
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
+      
+      - name: Install dependencies
+        if: (steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated') && steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      
+      - name: Optimize Assets
+        if: steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated'
+        id: optimize_assets
+        continue-on-error: true
+        run: |
+          node scripts/optimize-images.js &
+          node scripts/optimize-audio.js &
+          node scripts/optimize-json.js &
+          wait
+      
+      - name: Check Optimization Status
+        if: (steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated') && steps.optimize_assets.outcome == 'failure'
+        run: |
+          echo "Resource optimization failed, please check logs"
+          exit 1
+      
+      - name: Check for changes
+        if: steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated'
+        id: check_changes
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "changes=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Commit and push if changed
+        if: (steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated') && steps.check_changes.outputs.changes == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # 获取更改的文件统计
+          IMAGES_CHANGED=$(git diff --name-only | grep -E "\.(png|jpg|jpeg|gif|webp)$" | wc -l)
+          AUDIO_CHANGED=$(git diff --name-only | grep -E "\.(mp3|wav|ogg)$" | wc -l)
+          JSON_CHANGED=$(git diff --name-only | grep -E "\.json$" | wc -l)
+          
+          # 构建提交消息
+          COMMIT_MSG="Auto-optimize Resources\n\nOptimization Statistics:\n- Image files: ${IMAGES_CHANGED}\n- Audio files: ${AUDIO_CHANGED}\n- JSON files: ${JSON_CHANGED}"
+          
+          git add -A
+          git commit -m "${COMMIT_MSG}"
+          git push origin HEAD:auto-optimize -f
