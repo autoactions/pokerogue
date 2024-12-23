@@ -106,7 +106,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/ffmpeg
-          key: ${{ runner.os }}-ffmpeg-${{ env.FFMPEG_VERSION }}-${{ hashFiles('scripts/optimize-audio.js') }}
+          key: ${{ runner.os }}-ffmpeg-${{ env.FFMPEG_VERSION }}
       
       - name: Install FFmpeg
         if: steps.check_changes.outputs.should_process == 'true' && steps.cache-ffmpeg.outputs.cache-hit != 'true'
@@ -114,10 +114,15 @@ jobs:
           mkdir -p ~/ffmpeg
           wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
           tar xf ffmpeg-release-amd64-static.tar.xz
-          mv ffmpeg-*-amd64-static/ffmpeg ~/ffmpeg/
-          mv ffmpeg-*-amd64-static/ffprobe ~/ffmpeg/
+          mv ffmpeg-*-amd64-static/* ~/ffmpeg/
           rm -rf ffmpeg-*-amd64-static*
+
+      - name: Add FFmpeg to PATH
+        if: steps.check_changes.outputs.should_process == 'true'
+        run: |
+          echo "将 FFmpeg 添加到 PATH"
           echo "$HOME/ffmpeg" >> $GITHUB_PATH
+          ffmpeg -version
       
       - name: Cache node_modules
         if: steps.check_changes.outputs.should_process == 'true'
