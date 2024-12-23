@@ -115,7 +115,8 @@ jobs:
       
       - name: Install dependencies
         if: (steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated') && steps.cache-node-modules.outputs.cache-hit != 'true'
-        run: npm ci
+        run: |
+          npm install sharp
       
       - name: Optimize Assets
         if: steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated'

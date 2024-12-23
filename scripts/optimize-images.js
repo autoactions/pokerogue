@@ -2,7 +2,6 @@ import sharp from 'sharp';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { glob } from 'glob';
 import os from 'os';
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 
@@ -11,6 +10,28 @@ const __dirname = path.dirname(__filename);
 
 const sourceDir = 'public';
 const SMALL_FILE_THRESHOLD = 5 * 1024; // 5KB
+
+// 递归遍历目录获取所有PNG文件
+async function getAllPngFiles(dir) {
+    const files = [];
+    
+    async function traverse(currentDir) {
+        const entries = await fs.readdir(currentDir, { withFileTypes: true });
+        
+        for (const entry of entries) {
+            const fullPath = path.join(currentDir, entry.name);
+            
+            if (entry.isDirectory()) {
+                await traverse(fullPath);
+            } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.png')) {
+                files.push(fullPath);
+            }
+        }
+    }
+    
+    await traverse(dir);
+    return files;
+}
 
 // 动态计算最佳参数
 async function calculateOptimalParams() {
@@ -338,7 +359,7 @@ else {
             console.log('==================================\n');
             
             // 获取所有PNG文件
-            const files = await glob(path.join(sourceDir, '**/*.png'));
+            const files = await getAllPngFiles(sourceDir);
             const totalFiles = files.length;
             
             console.log(`找到 ${files.length} 个PNG文件需要优化\n`);
