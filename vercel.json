@@ -1,6 +1,6 @@
 {
     "version": 2,
-    "buildCommand": "npm run build",
+    "buildCommand": "npm run build:beta",
     "outputDirectory": "dist",
     "installCommand": "npm config set ignore-scripts true && npm ci && npm rebuild",
     "routes": [
