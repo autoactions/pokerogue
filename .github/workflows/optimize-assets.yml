@@ -7,14 +7,17 @@ on:
 
 env:
   FFMPEG_VERSION: '6.1'
+  NODE_VERSION: '20'
+  UPSTREAM_REPO: 'https://github.com/pagefaultgames/pokerogue.git'
+  GIT_USER_EMAIL: 'github-actions[bot]@users.noreply.github.com'
+  GIT_USER_NAME: 'github-actions[bot]'
 
 jobs:
   optimize:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # 设置任务超时时间
+    timeout-minutes: 30
     
     steps:
-      # 添加仓库缓存
       - name: Cache Git Repository
         id: cache-repo
         uses: actions/cache@v4
@@ -24,22 +27,25 @@ jobs:
           restore-keys: |
             git-repo-
       
+      - name: Save current HEAD
+        if: steps.cache-repo.outputs.cache-hit == 'true'
+        id: save_head
+        run: echo "previous_head=$(cat .git/HEAD)" >> $GITHUB_OUTPUT
+      
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 获取完整历史以确保正确同步
-          token: ${{ github.token }}  # 使用默认的 GITHUB_TOKEN
+          fetch-depth: 0
+          token: ${{ github.token }}
       
       - name: Setup Git and Check Upstream
         id: check_upstream
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+          git config --local user.email "${{ env.GIT_USER_EMAIL }}"
+          git config --local user.name "${{ env.GIT_USER_NAME }}"
           
-          # 检查是否存在上游仓库
           if ! git remote | grep -q '^upstream$'; then
             echo "first_run=true" >> $GITHUB_OUTPUT
-            echo "Adding upstream repository..."
-            git remote add upstream https://github.com/pagefaultgames/pokerogue.git
+            git remote add upstream ${{ env.UPSTREAM_REPO }}
           else
             echo "first_run=false" >> $GITHUB_OUTPUT
           fi
@@ -47,53 +53,55 @@ jobs:
       - name: Sync with upstream
         id: sync
         run: |
-          # 获取上游更新
           git fetch upstream main
           
-          # 检查上游和本地是否有更新
+          PREVIOUS_HEAD="${{ steps.save_head.outputs.previous_head }}"
+          CURRENT_HEAD=$(cat .git/HEAD)
           UPSTREAM_CHANGES=$(git rev-list HEAD..upstream/main --count)
-          LOCAL_CHANGES=$(git status --porcelain | wc -l)
           
-          if [ "$UPSTREAM_CHANGES" -eq 0 ] && [ "$LOCAL_CHANGES" -eq 0 ]; then
-            echo "sync_status=uptodate" >> $GITHUB_OUTPUT
-            echo "No changes in upstream or local repository"
-            exit 0
-          fi
-          
-          # 如果有上游更新，尝试合并
-          if [ "$UPSTREAM_CHANGES" -ne 0 ]; then
-            if ! git merge upstream/main --no-edit; then
-              echo "Merge failed, conflicts detected"
-              git merge --abort
-              echo "sync_status=conflict" >> $GITHUB_OUTPUT
-              exit 1
-            fi
+          if [[ "$PREVIOUS_HEAD" != "$CURRENT_HEAD" || "$UPSTREAM_CHANGES" -gt 0 ]]; then
+            echo "sync_status=updated" >> $GITHUB_OUTPUT
+            echo "Changes detected (Local: ${PREVIOUS_HEAD} -> ${CURRENT_HEAD}, Upstream changes: ${UPSTREAM_CHANGES})"
             
-            # 推送合并后的更新到原分支
-            git push
+            if [[ "$UPSTREAM_CHANGES" -gt 0 ]]; then
+              if git merge upstream/main --no-edit; then
+                git push
+              else
+                echo "sync_status=conflict" >> $GITHUB_OUTPUT
+                git merge --abort
+                exit 1
+              fi
+            fi
+          else
+            echo "sync_status=uptodate" >> $GITHUB_OUTPUT
           fi
-          
-          echo "sync_status=updated" >> $GITHUB_OUTPUT
       
-      # 只有当是首次执行或仓库有更新且同步成功时，才继续执行后续步骤
+      - name: Check Update Status
+        id: update_check
+        run: |
+          if [[ "${{ steps.check_upstream.outputs.first_run }}" == "true" || "${{ steps.sync.outputs.sync_status }}" == "updated" ]]; then
+            echo "should_process=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_process=false" >> $GITHUB_OUTPUT
+          fi
+      
       - name: Setup Node.js
-        if: steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated'
+        if: steps.update_check.outputs.should_process == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
       
-      # 优化 FFmpeg 缓存
       - name: Cache FFmpeg
-        if: steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated'
+        if: steps.update_check.outputs.should_process == 'true'
         id: cache-ffmpeg
         uses: actions/cache@v4
         with:
           path: ~/ffmpeg
-          key: ${{ runner.os }}-ffmpeg-static-${{ env.FFMPEG_VERSION }}
+          key: ${{ runner.os }}-ffmpeg-${{ env.FFMPEG_VERSION }}-${{ hashFiles('scripts/optimize-audio.js') }}
       
       - name: Install FFmpeg
-        if: (steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated') && steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        if: steps.update_check.outputs.should_process == 'true' && steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/ffmpeg
           wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
@@ -101,67 +109,52 @@ jobs:
           mv ffmpeg-*-amd64-static/ffmpeg ~/ffmpeg/
           mv ffmpeg-*-amd64-static/ffprobe ~/ffmpeg/
           rm -rf ffmpeg-*-amd64-static*
+          echo "$HOME/ffmpeg" >> $GITHUB_PATH
       
-      - name: Add FFmpeg to PATH
-        if: steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated'
-        run: echo "$HOME/ffmpeg" >> $GITHUB_PATH
-      
-      # 添加 node_modules 缓存
       - name: Cache node_modules
-        if: steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated'
+        if: steps.update_check.outputs.should_process == 'true'
         id: cache-node-modules
         uses: actions/cache@v4
         with:
-          path: node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+          path: |
+            **/node_modules
+            ~/.npm
+          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-${{ hashFiles('**/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-modules-
+            ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
       
       - name: Install dependencies
-        if: (steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated') && steps.cache-node-modules.outputs.cache-hit != 'true'
-        run: |
-          npm install sharp
+        if: steps.update_check.outputs.should_process == 'true' && steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm install sharp
       
       - name: Optimize Assets
-        if: steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated'
+        if: steps.update_check.outputs.should_process == 'true'
         id: optimize_assets
         continue-on-error: true
         run: |
-          node scripts/optimize-images.js &
-          node scripts/optimize-audio.js &
-          node scripts/optimize-json.js &
-          wait
+          for script in download-external-scripts optimize-images optimize-audio optimize-json; do
+            echo "Running $script..."
+            if ! node scripts/$script.js; then
+              echo "::error::Failed to run $script"
+              exit 1
+            fi
+          done
       
-      - name: Check Optimization Status
-        if: (steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated') && steps.optimize_assets.outcome == 'failure'
-        run: |
-          echo "Resource optimization failed, please check logs"
-          exit 1
-      
-      - name: Check for changes
-        if: steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated'
-        id: check_changes
+      - name: Process Changes
+        if: steps.update_check.outputs.should_process == 'true' && steps.optimize_assets.outcome == 'success'
         run: |
           if [[ -n "$(git status --porcelain)" ]]; then
-            echo "changes=true" >> $GITHUB_OUTPUT
-          else
-            echo "changes=false" >> $GITHUB_OUTPUT
+            # 获取更改的文件统计
+            STATS=$(git diff --name-only | awk '
+              /\.(png|jpg|jpeg|gif|webp)$/ { images++ }
+              /\.(mp3|wav|ogg)$/ { audio++ }
+              /\.json$/ { json++ }
+              END {
+                print "- Image files: " images "\n- Audio files: " audio "\n- JSON files: " json
+              }
+            ')
+            
+            git add -A
+            git commit -m "Auto-optimize Resources\n\nOptimization Statistics:\n${STATS}"
+            git push origin HEAD:auto-optimize -f
           fi
-      
-      - name: Commit and push if changed
-        if: (steps.check_upstream.outputs.first_run == 'true' || steps.sync.outputs.sync_status == 'updated') && steps.check_changes.outputs.changes == 'true'
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          
-          # 获取更改的文件统计
-          IMAGES_CHANGED=$(git diff --name-only | grep -E "\.(png|jpg|jpeg|gif|webp)$" | wc -l)
-          AUDIO_CHANGED=$(git diff --name-only | grep -E "\.(mp3|wav|ogg)$" | wc -l)
-          JSON_CHANGED=$(git diff --name-only | grep -E "\.json$" | wc -l)
-          
-          # 构建提交消息
-          COMMIT_MSG="Auto-optimize Resources\n\nOptimization Statistics:\n- Image files: ${IMAGES_CHANGED}\n- Audio files: ${AUDIO_CHANGED}\n- JSON files: ${JSON_CHANGED}"
-          
-          git add -A
-          git commit -m "${COMMIT_MSG}"
-          git push origin HEAD:auto-optimize -f
