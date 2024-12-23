@@ -23,77 +23,85 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .git
-          key: git-repo-${{ github.sha }}
+          key: git-repo-${{ github.ref }}
           restore-keys: |
             git-repo-
       
-      - name: Save current HEAD
+      - name: Get Previous Commit
+        id: get-commit
         if: steps.cache-repo.outputs.cache-hit == 'true'
-        id: save_head
-        run: echo "previous_head=$(cat .git/HEAD)" >> $GITHUB_OUTPUT
-      
+        run: |
+          echo "Git cache hit, retrieving previous commit..."
+          PREVIOUS_COMMIT=$(git rev-parse HEAD)
+          echo "Previous commit: $PREVIOUS_COMMIT"
+          echo "previous_commit=$PREVIOUS_COMMIT" >> $GITHUB_OUTPUT
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ github.token }}
       
       - name: Setup Git and Check Upstream
-        id: check_upstream
         run: |
+          echo "Configuring git..."
           git config --local user.email "${{ env.GIT_USER_EMAIL }}"
           git config --local user.name "${{ env.GIT_USER_NAME }}"
           
+          echo "Checking upstream remote..."
           if ! git remote | grep -q '^upstream$'; then
-            echo "first_run=true" >> $GITHUB_OUTPUT
+            echo "Adding upstream remote: ${{ env.UPSTREAM_REPO }}"
             git remote add upstream ${{ env.UPSTREAM_REPO }}
           else
-            echo "first_run=false" >> $GITHUB_OUTPUT
+            echo "Upstream remote already exists, updating URL..."
+            git remote set-url upstream ${{ env.UPSTREAM_REPO }}
           fi
 
       - name: Sync with upstream
-        id: sync
         run: |
+          echo "Fetching upstream changes..."
           git fetch upstream main
-          
-          PREVIOUS_HEAD="${{ steps.save_head.outputs.previous_head }}"
-          CURRENT_HEAD=$(cat .git/HEAD)
           UPSTREAM_CHANGES=$(git rev-list HEAD..upstream/main --count)
           
-          if [[ "$PREVIOUS_HEAD" != "$CURRENT_HEAD" || "$UPSTREAM_CHANGES" -gt 0 ]]; then
-            echo "sync_status=updated" >> $GITHUB_OUTPUT
-            echo "Changes detected (Local: ${PREVIOUS_HEAD} -> ${CURRENT_HEAD}, Upstream changes: ${UPSTREAM_CHANGES})"
-            
-            if [[ "$UPSTREAM_CHANGES" -gt 0 ]]; then
-              if git merge upstream/main --no-edit; then
-                git push
-              else
-                echo "sync_status=conflict" >> $GITHUB_OUTPUT
-                git merge --abort
-                exit 1
-              fi
-            fi
+          echo "Number of upstream changes: $UPSTREAM_CHANGES"
+          if [[ "$UPSTREAM_CHANGES" -gt 0 ]]; then
+            echo "Upstream changes detected: ${UPSTREAM_CHANGES}"
+            echo "Merging upstream changes..."
+            git merge upstream/main --no-edit && git push
+            echo "Merge completed and pushed"
           else
-            echo "sync_status=uptodate" >> $GITHUB_OUTPUT
+            echo "No upstream changes detected"
           fi
       
-      - name: Check Update Status
-        id: update_check
+      - name: Check Changes
+        id: check_changes
         run: |
-          if [[ "${{ steps.check_upstream.outputs.first_run }}" == "true" || "${{ steps.sync.outputs.sync_status }}" == "updated" ]]; then
+          echo "Checking for changes..."
+          CURRENT_COMMIT=$(git rev-parse HEAD)
+          PREVIOUS_COMMIT="${{ steps.get-commit.outputs.previous_commit }}"
+          
+          echo "Current commit: $CURRENT_COMMIT"
+          echo "Previous commit: $PREVIOUS_COMMIT"
+          
+          if [ -z "$PREVIOUS_COMMIT" ]; then
+            echo "No previous commit found (first run or cache miss)"
+            echo "should_process=true" >> $GITHUB_OUTPUT
+          elif [ "$CURRENT_COMMIT" != "$PREVIOUS_COMMIT" ]; then
+            echo "Changes detected between commits"
             echo "should_process=true" >> $GITHUB_OUTPUT
           else
+            echo "No changes detected"
             echo "should_process=false" >> $GITHUB_OUTPUT
           fi
       
       - name: Setup Node.js
-        if: steps.update_check.outputs.should_process == 'true'
+        if: steps.check_changes.outputs.should_process == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
       
       - name: Cache FFmpeg
-        if: steps.update_check.outputs.should_process == 'true'
+        if: steps.check_changes.outputs.should_process == 'true'
         id: cache-ffmpeg
         uses: actions/cache@v4
         with:
@@ -101,7 +109,7 @@ jobs:
           key: ${{ runner.os }}-ffmpeg-${{ env.FFMPEG_VERSION }}-${{ hashFiles('scripts/optimize-audio.js') }}
       
       - name: Install FFmpeg
-        if: steps.update_check.outputs.should_process == 'true' && steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        if: steps.check_changes.outputs.should_process == 'true' && steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/ffmpeg
           wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
@@ -112,7 +120,7 @@ jobs:
           echo "$HOME/ffmpeg" >> $GITHUB_PATH
       
       - name: Cache node_modules
-        if: steps.update_check.outputs.should_process == 'true'
+        if: steps.check_changes.outputs.should_process == 'true'
         id: cache-node-modules
         uses: actions/cache@v4
         with:
@@ -124,11 +132,11 @@ jobs:
             ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
       
       - name: Install dependencies
-        if: steps.update_check.outputs.should_process == 'true' && steps.cache-node-modules.outputs.cache-hit != 'true'
+        if: steps.check_changes.outputs.should_process == 'true' && steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm install sharp
       
       - name: Optimize Assets
-        if: steps.update_check.outputs.should_process == 'true'
+        if: steps.check_changes.outputs.should_process == 'true'
         id: optimize_assets
         continue-on-error: true
         run: |
@@ -141,10 +149,9 @@ jobs:
           done
       
       - name: Process Changes
-        if: steps.update_check.outputs.should_process == 'true' && steps.optimize_assets.outcome == 'success'
+        if: steps.check_changes.outputs.should_process == 'true' && steps.optimize_assets.outcome == 'success'
         run: |
           if [[ -n "$(git status --porcelain)" ]]; then
-            # 获取更改的文件统计
             STATS=$(git diff --name-only | awk '
               /\.(png|jpg|jpeg|gif|webp)$/ { images++ }
               /\.(mp3|wav|ogg)$/ { audio++ }

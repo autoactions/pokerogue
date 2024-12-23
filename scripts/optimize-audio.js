@@ -63,17 +63,24 @@ const compareAndLogSize = (inputPath, originalSize, compressedSize) => {
   const savings = ((originalSize - compressedSize) / originalSize * 100).toFixed(2);
   const isLarger = compressedSize > originalSize;
   
-  console.log(`${isLarger ? '压缩后文件更大，保留原文件' : '压缩完成'}: ${inputPath}`);
-  console.log(`原始大小: ${formatFileSize(originalSize)}`);
-  console.log(`压缩后大小: ${formatFileSize(compressedSize)}`);
-  console.log(`${isLarger ? '体积增加' : '节省空间'}: ${isLarger ? -savings : savings}%`);
+  if (isLarger) {
+    console.log(`[跳过] ${path.basename(inputPath)} (压缩后更大)`);
+  } else {
+    console.log(`[完成] ${path.basename(inputPath)} (节省 ${savings}%)`);
+  }
   
-  return { isLarger, savings };
+  return { 
+    isLarger, 
+    savings: parseFloat(savings),
+    originalSize,
+    compressedSize,
+    savedSize: isLarger ? 0 : (originalSize - compressedSize)
+  };
 };
 
 // 并行处理文件的函数
 const processFilesInParallel = async (files, processFunction, maxConcurrent = DEFAULT_CONCURRENT) => {
-  console.log(`使用 ${maxConcurrent} 个并行任务处理文件（系统共 ${CPU_CORES} 个CPU核心）`);
+  console.log(`\n开始处理 ${files.length} 个文件 (${maxConcurrent} 个并行任务)`);
   const chunks = [];
   for (let i = 0; i < files.length; i += maxConcurrent) {
     chunks.push(files.slice(i, i + maxConcurrent));
@@ -81,26 +88,48 @@ const processFilesInParallel = async (files, processFunction, maxConcurrent = DE
   
   let processedCount = 0;
   let errorCount = 0;
+  let totalOriginalSize = 0;
+  let totalCompressedSize = 0;
+  let totalSavedSize = 0;
+  let maxSavingsFile = null;
+  const totalFiles = files.length;
   
   for (const chunk of chunks) {
     const results = await Promise.allSettled(chunk.map(file => processFunction(file)));
     results.forEach(result => {
-      if (result.status === 'fulfilled') {
+      if (result.status === 'fulfilled' && result.value) {
         processedCount++;
+        const { originalSize, compressedSize, savedSize, savings, filePath } = result.value;
+        totalOriginalSize += originalSize;
+        totalCompressedSize += compressedSize;
+        totalSavedSize += savedSize;
+        
+        if (savedSize > 0 && (!maxSavingsFile || savings > maxSavingsFile.savings)) {
+          maxSavingsFile = { filePath, savings, savedSize };
+        }
       } else {
         errorCount++;
       }
     });
+    
+    // 显示进度条
+    const progress = ((processedCount + errorCount) / totalFiles * 100).toFixed(1);
+    process.stdout.write(`\r进度: ${progress}% (${processedCount + errorCount}/${totalFiles})`);
   }
   
-  return { processedCount, errorCount };
+  console.log('\n'); // 换行
+  return { 
+    processedCount, 
+    errorCount,
+    totalOriginalSize,
+    totalCompressedSize,
+    totalSavedSize,
+    maxSavingsFile
+  };
 };
 
 // 音频优化
 const optimizeAudio = async (inputPath) => {
-  console.log(`开始处理音频文件: ${inputPath}`);
-  
-  // 统一使用小写扩展名
   const extension = getExtension(inputPath);
   const tempOutputPath = inputPath.replace(/\.[^/.]+$/, `_temp${extension}`);
   const tempOpusPath = inputPath.replace(/\.[^/.]+$/, '_temp.opus');
@@ -119,7 +148,7 @@ const optimizeAudio = async (inputPath) => {
       // 比较文件大小
       const originalSize = fs.statSync(inputPath).size;
       const mp3Size = fs.statSync(tempMp3Path).size;
-      const { isLarger } = compareAndLogSize(inputPath, originalSize, mp3Size);
+      const { isLarger, ...stats } = compareAndLogSize(inputPath, originalSize, mp3Size);
       
       if (!isLarger) {
         // 如果MP3更小，替换原文件
@@ -127,7 +156,7 @@ const optimizeAudio = async (inputPath) => {
         fs.renameSync(tempMp3Path, inputPath);
       }
       
-      return inputPath;
+      return { ...stats, filePath: inputPath };
     } else if (extension === '.m4a') {
       // m4a文件使用opus中转以获得更好的压缩效果
       await execFFmpeg(`ffmpeg -hide_banner -loglevel error -i "${inputPath}" -c:a libopus -b:a 48k -ac 1 -ar 24000 -application audio "${tempOpusPath}"`);
@@ -177,21 +206,21 @@ const optimizeAudio = async (inputPath) => {
     // 比较文件大小
     const originalSize = fs.statSync(inputPath).size;
     const compressedSize = fs.statSync(tempOutputPath).size;
-    const { isLarger } = compareAndLogSize(inputPath, originalSize, compressedSize);
+    const { isLarger, ...stats } = compareAndLogSize(inputPath, originalSize, compressedSize);
     
     if (isLarger) {
       // 如果压缩后文件更大，保留原文件
       fs.unlinkSync(tempOutputPath);
-      return inputPath;
+      return { ...stats, filePath: inputPath };
     }
     
     // 替换原文件
     fs.unlinkSync(inputPath);
     fs.renameSync(tempOutputPath, inputPath);
     
-    return inputPath;
+    return { ...stats, filePath: inputPath };
   } catch (error) {
-    console.error(`处理文件失败: ${inputPath}`);
+    console.error(`[错误] ${path.basename(inputPath)}: ${error.message}`);
     throw error;
   } finally {
     // 清理所有临时文件
@@ -200,10 +229,9 @@ const optimizeAudio = async (inputPath) => {
       try {
         if (fs.existsSync(tempFile)) {
           fs.unlinkSync(tempFile);
-          console.log(`已清理临时文件: ${tempFile}`);
         }
       } catch (e) {
-        console.error(`清理临时文件失败: ${tempFile}`, e);
+        console.error(`[错误] 清理临时文件失败: ${path.basename(tempFile)}`);
       }
     }
   }
@@ -211,8 +239,6 @@ const optimizeAudio = async (inputPath) => {
 
 // 视频优化
 const optimizeVideo = async (inputPath) => {
-  console.log(`开始处理视频文件: ${inputPath}`);
-  
   const extension = getExtension(inputPath);
   const tempOutputPath = inputPath.replace(extension, `_temp${extension}`);
   
@@ -249,20 +275,22 @@ const optimizeVideo = async (inputPath) => {
     // 比较文件大小
     const originalSize = fs.statSync(inputPath).size;
     const compressedSize = fs.statSync(tempOutputPath).size;
-    const { isLarger } = compareAndLogSize(inputPath, originalSize, compressedSize);
+    const { isLarger, ...stats } = compareAndLogSize(inputPath, originalSize, compressedSize);
     
     if (isLarger) {
       // 如果压缩后文件更大，保留原文件
       fs.unlinkSync(tempOutputPath);
-      return inputPath;
+      return { ...stats, filePath: inputPath };
     }
     
     // 替换原文件（如果是mov/avi转mp4，则删除原文件）
     fs.unlinkSync(inputPath);
-    fs.renameSync(tempOutputPath, inputPath.replace(extension, extension === '.mov' || extension === '.avi' ? '.mp4' : extension));
+    const newPath = inputPath.replace(extension, extension === '.mov' || extension === '.avi' ? '.mp4' : extension);
+    fs.renameSync(tempOutputPath, newPath);
     
-    return inputPath;
+    return { ...stats, filePath: newPath };
   } catch (error) {
+    console.error(`[错误] ${path.basename(inputPath)}: ${error.message}`);
     if (fs.existsSync(tempOutputPath)) {
       fs.unlinkSync(tempOutputPath);
     }
@@ -272,16 +300,12 @@ const optimizeVideo = async (inputPath) => {
 
 // 递归处理目录
 const processDirectory = async (dir) => {
-  console.log(`开始扫描目录: ${dir}`);
-  
   if (!fs.existsSync(dir)) {
-    console.error(`错误: 目录不存在 - ${dir}`);
+    console.error(`[错误] 目录不存在: ${dir}`);
     return { processedCount: 0, errorCount: 0 };
   }
   
   const files = fs.readdirSync(dir);
-  console.log(`在 ${dir} 中找到 ${files.length} 个文件/目录`);
-  
   const tasks = [];
   const subdirs = [];
   
@@ -312,7 +336,7 @@ const processDirectory = async (dir) => {
           await optimizeVideo(task.path);
         }
       } catch (error) {
-        console.error(`处理文件 ${task.path} 时出错:`, error);
+        console.error(`[错误] 处理文件 ${task.path} 时出错:`, error);
         throw error;
       }
     };
@@ -335,21 +359,46 @@ const processDirectory = async (dir) => {
 // 主目录
 const mainDir = path.join(__dirname, '../public');
 
-console.log('开始音视频优化处理...');
-console.log(`主目录: ${mainDir}`);
-console.log('支持的音频格式:', AUDIO_EXTENSIONS.join(', '));
-console.log('支持的视频格式:', VIDEO_EXTENSIONS.join(', '));
-console.log('警告：此操作将直接替换原文件，请确保已备份重要文件');
+console.log('音视频优化工具');
+console.log(`目录: ${mainDir}`);
+console.log(`支持格式: ${[...AUDIO_EXTENSIONS, ...VIDEO_EXTENSIONS].join(', ')}`);
 
-// 处理主目录（添加错误处理）
+// 处理主目录
 processDirectory(mainDir)
   .then((results) => {
-    console.log('\n处理总结:');
-    console.log(`- 成功处理文件数: ${results.processedCount}`);
-    console.log(`- 处理失败文件数: ${results.errorCount}`);
-    console.log('所有文件处理完成！');
+    const { 
+      processedCount, 
+      errorCount, 
+      totalOriginalSize, 
+      totalCompressedSize,
+      totalSavedSize,
+      maxSavingsFile 
+    } = results;
+
+    console.log('\n优化报告:');
+    console.log('----------------------------------------');
+    console.log(`处理文件总数: ${processedCount + errorCount}`);
+    console.log(`✓ 成功: ${processedCount} 个文件`);
+    if (errorCount > 0) {
+      console.log(`✗ 失败: ${errorCount} 个文件`);
+    }
+    
+    if (processedCount > 0) {
+      const totalSavingsPercent = ((totalSavedSize / totalOriginalSize) * 100).toFixed(2);
+      console.log('\n空间节省:');
+      console.log(`- 原始总大小: ${formatFileSize(totalOriginalSize)}`);
+      console.log(`- 压缩后总大小: ${formatFileSize(totalCompressedSize)}`);
+      console.log(`- 节省空间: ${formatFileSize(totalSavedSize)} (${totalSavingsPercent}%)`);
+      
+      if (maxSavingsFile) {
+        console.log('\n最佳优化:');
+        console.log(`- 文件: ${path.basename(maxSavingsFile.filePath)}`);
+        console.log(`- 节省: ${formatFileSize(maxSavingsFile.savedSize)} (${maxSavingsFile.savings.toFixed(2)}%)`);
+      }
+    }
+    console.log('----------------------------------------');
   })
   .catch(error => {
-    console.error('处理过程中出错:', error);
+    console.error('\n处理失败:', error.message);
     process.exit(1);
   }); 
