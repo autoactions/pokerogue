@@ -12,7 +12,7 @@ import { pokerogueApi } from "#app/plugins/api/pokerogue-api";
 export default class TitleUiHandler extends OptionSelectUiHandler {
   /** If the stats can not be retrieved, use this fallback value */
   private static readonly BATTLES_WON_FALLBACK: number = -99999999;
-  private readonly ANNOUNCEMENT_CHANGE_INTERVAL = 10000; // 10秒切换一次
+  private readonly ANNOUNCEMENT_CHANGE_INTERVAL = 13000; // 20秒切换一次
 
   private titleContainer: Phaser.GameObjects.Container;
   private playerCountLabel: Phaser.GameObjects.Text;
@@ -124,13 +124,13 @@ export default class TitleUiHandler extends OptionSelectUiHandler {
     this.scene.tweens.add({
       targets: this.announcementText,
       alpha: 0,
-      duration: 500,
+      duration: 1500,
       onComplete: () => {
         this.announcementText.setText(getAnnouncementMessage());
         this.scene.tweens.add({
           targets: this.announcementText,
           alpha: 1,
-          duration: 500
+          duration: 1500
         });
       }
     });
