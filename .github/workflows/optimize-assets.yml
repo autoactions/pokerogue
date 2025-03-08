@@ -8,7 +8,6 @@ on:
 env:
   FFMPEG_VERSION: '6.1'
   NODE_VERSION: '20'
-  UPSTREAM_REPO: 'https://github.com/pagefaultgames/pokerogue.git'
   GIT_USER_EMAIL: 'github-actions[bot]@users.noreply.github.com'
   GIT_USER_NAME: 'github-actions[bot]'
 
@@ -26,7 +25,7 @@ jobs:
           key: git-repo-${{ github.ref }}
           restore-keys: |
             git-repo-
-      
+
       - name: Get Previous Commit
         id: get-commit
         if: steps.cache-repo.outputs.cache-hit == 'true'
@@ -40,41 +39,14 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ github.token }}
-      
-      - name: Setup Git and Check Upstream
+
+      - name: Check Changes
+        id: check_changes
         run: |
           echo "Configuring git..."
           git config --local user.email "${{ env.GIT_USER_EMAIL }}"
           git config --local user.name "${{ env.GIT_USER_NAME }}"
           
-          echo "Checking upstream remote..."
-          if ! git remote | grep -q '^upstream$'; then
-            echo "Adding upstream remote: ${{ env.UPSTREAM_REPO }}"
-            git remote add upstream ${{ env.UPSTREAM_REPO }}
-          else
-            echo "Upstream remote already exists, updating URL..."
-            git remote set-url upstream ${{ env.UPSTREAM_REPO }}
-          fi
-
-      - name: Sync with upstream
-        run: |
-          echo "Fetching upstream changes..."
-          git fetch upstream main
-          UPSTREAM_CHANGES=$(git rev-list HEAD..upstream/main --count)
-          
-          echo "Number of upstream changes: $UPSTREAM_CHANGES"
-          if [[ "$UPSTREAM_CHANGES" -gt 0 ]]; then
-            echo "Upstream changes detected: ${UPSTREAM_CHANGES}"
-            echo "Merging upstream changes..."
-            git merge upstream/main --no-edit && git push
-            echo "Merge completed and pushed"
-          else
-            echo "No upstream changes detected"
-          fi
-      
-      - name: Check Changes
-        id: check_changes
-        run: |
           echo "Checking for changes..."
           CURRENT_COMMIT=$(git rev-parse HEAD)
           PREVIOUS_COMMIT="${{ steps.get-commit.outputs.previous_commit }}"
