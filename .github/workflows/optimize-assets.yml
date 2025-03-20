@@ -59,14 +59,14 @@ jobs:
       - name: Sync with upstream
         run: |
           echo "Fetching upstream changes..."
-          git fetch upstream main
-          UPSTREAM_CHANGES=$(git rev-list HEAD..upstream/main --count)
+          git fetch upstream beta
+          UPSTREAM_CHANGES=$(git rev-list HEAD..upstream/beta --count)
           
           echo "Number of upstream changes: $UPSTREAM_CHANGES"
           if [[ "$UPSTREAM_CHANGES" -gt 0 ]]; then
             echo "Upstream changes detected: ${UPSTREAM_CHANGES}"
             echo "Merging upstream changes..."
-            git merge upstream/main --no-edit && git push
+            git merge upstream/beta --no-edit && git push
             echo "Merge completed and pushed"
           else
             echo "No upstream changes detected"
