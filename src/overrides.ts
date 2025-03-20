@@ -1,27 +1,37 @@
 import { type PokeballCounts } from "#app/battle-scene";
+import { EvolutionItem } from "#app/data/balance/pokemon-evolutions";
 import { Gender } from "#app/data/gender";
+import { FormChangeItem } from "#app/data/pokemon-forms";
 import { Variant } from "#app/data/variant";
 import { type ModifierOverride } from "#app/modifier/modifier-type";
 import { Unlockables } from "#app/system/unlockables";
 import { Abilities } from "#enums/abilities";
+import { BerryType } from "#enums/berry-type";
 import { Biome } from "#enums/biome";
 import { EggTier } from "#enums/egg-type";
 import { Moves } from "#enums/moves";
 import { MysteryEncounterTier } from "#enums/mystery-encounter-tier";
 import { MysteryEncounterType } from "#enums/mystery-encounter-type";
 import { PokeballType } from "#enums/pokeball";
+import { PokemonType } from "#enums/pokemon-type";
 import { Species } from "#enums/species";
+import { Stat } from "#enums/stat";
 import { StatusEffect } from "#enums/status-effect";
 import { TimeOfDay } from "#enums/time-of-day";
 import { VariantTier } from "#enums/variant-tier";
 import { WeatherType } from "#enums/weather-type";
 
 /**
+ * This comment block exists to prevent IDEs from automatically removing unused imports
+ * {@linkcode BerryType}, {@linkcode EvolutionItem}, {@linkcode FormChangeItem}
+ * {@linkcode Stat}, {@linkcode PokemonType}
+ */
+/**
  * Overrides that are using when testing different in game situations
  *
  * Any override added here will be used instead of the value in {@linkcode DefaultOverrides}
  *
- * If an override name starts with "STARTING", it will apply when a new run begins
+ * If an override name starts with "STARTING", it will only apply when a new run begins.
  *
  * @example
  * ```
@@ -38,7 +48,7 @@ const overrides = {} satisfies Partial<InstanceType<typeof DefaultOverrides>>;
  * ---
  * Defaults for Overrides that are used when testing different in game situations
  *
- * If an override name starts with "STARTING", it will apply when a new run begins
+ * If an override name starts with "STARTING", it will only apply when a new run begins.
  */
 class DefaultOverrides {
   // -----------------
@@ -46,6 +56,7 @@ class DefaultOverrides {
   // -----------------
   /** a specific seed (default: a random string of 24 characters) */
   readonly SEED_OVERRIDE: string = "";
+  readonly DAILY_RUN_SEED_OVERRIDE: string | null = null;
   readonly WEATHER_OVERRIDE: WeatherType = WeatherType.NONE;
   /**
    * If `null`, ignore this override.
@@ -62,8 +73,11 @@ class DefaultOverrides {
   readonly STARTING_WAVE_OVERRIDE: number = 0;
   readonly STARTING_BIOME_OVERRIDE: Biome = Biome.TOWN;
   readonly ARENA_TINT_OVERRIDE: TimeOfDay | null = null;
-  /** Multiplies XP gained by this value including 0. Set to null to ignore the override */
+  /** Multiplies XP gained by this value including 0. Set to null to ignore the override. */
   readonly XP_MULTIPLIER_OVERRIDE: number | null = null;
+  /** Sets the level cap to this number during experience gain calculations. Set to `0` to disable override & use normal wave-based level caps,
+  or any negative number to set it to 9 quadrillion (effectively disabling it). */
+  readonly LEVEL_CAP_OVERRIDE: number = 0;
   readonly NEVER_CRIT_OVERRIDE: boolean = false;
   /** default 1000 */
   readonly STARTING_MONEY_OVERRIDE: number = 0;
@@ -122,9 +136,10 @@ class DefaultOverrides {
   /**
    * This will override the species of the fusion
    */
-  readonly STARTER_FUSION_SPECIES_OVERRIDE: Species | integer = 0;
+  readonly STARTER_FUSION_SPECIES_OVERRIDE: Species | number = 0;
   readonly ABILITY_OVERRIDE: Abilities = Abilities.NONE;
   readonly PASSIVE_ABILITY_OVERRIDE: Abilities = Abilities.NONE;
+  readonly HAS_PASSIVE_ABILITY_OVERRIDE: boolean | null = null;
   readonly STATUS_OVERRIDE: StatusEffect = StatusEffect.NONE;
   readonly GENDER_OVERRIDE: Gender | null = null;
   readonly MOVESET_OVERRIDE: Moves | Array<Moves> = [];
@@ -142,10 +157,11 @@ class DefaultOverrides {
   /**
    * This will override the species of the fusion only when the opponent is already a fusion
    */
-  readonly OPP_FUSION_SPECIES_OVERRIDE: Species | integer = 0;
+  readonly OPP_FUSION_SPECIES_OVERRIDE: Species | number = 0;
   readonly OPP_LEVEL_OVERRIDE: number = 0;
   readonly OPP_ABILITY_OVERRIDE: Abilities = Abilities.NONE;
   readonly OPP_PASSIVE_ABILITY_OVERRIDE: Abilities = Abilities.NONE;
+  readonly OPP_HAS_PASSIVE_ABILITY_OVERRIDE: boolean | null = null;
   readonly OPP_STATUS_OVERRIDE: StatusEffect = StatusEffect.NONE;
   readonly OPP_GENDER_OVERRIDE: Gender | null = null;
   readonly OPP_MOVESET_OVERRIDE: Moves | Array<Moves> = [];
