@@ -3,11 +3,29 @@
     "buildCommand": "npm run build:beta",
     "outputDirectory": "dist",
     "installCommand": "npm config set ignore-scripts true && npm ci && npm rebuild",
-    "routes": [
-      { "handle": "filesystem" },
-      { "src": "/.*", "dest": "/index.html" }
+    "rewrites": [
+      { "source": "/(.*)", "destination": "/index.html" }
     ],
     "env": {
       "SKIP_POSTINSTALL": "1"
-    }
+    },
+    "headers": [
+      {
+        "source": "/(.*)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "s-maxage=604800, stale-while-revalidate=3600"
+          },
+          {
+            "key": "CDN-Cache-Control",
+            "value": "max-age=604800"
+          },
+          {
+            "key": "Vercel-CDN-Cache-Control",
+            "value": "max-age=604800"
+          }
+        ]
+      }
+    ]
   }
