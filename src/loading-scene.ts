@@ -354,7 +354,7 @@ export class LoadingScene extends SceneBase {
 
     this.load.plugin(
       "rextexteditplugin",
-      "https://raw.githubusercontent.com/rexrainbow/phaser3-rex-notes/master/dist/rextexteditplugin.min.js",
+      "../external-scripts/rextexteditplugin.min.js",
       true,
     );
 
